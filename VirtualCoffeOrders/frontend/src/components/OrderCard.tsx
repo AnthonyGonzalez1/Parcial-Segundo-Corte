@@ -45,19 +45,33 @@ export const OrderCard = ({ order }: OrderCardProps) => {
   const [isValidProduct, setIsValidProduct] = useState<boolean | null>(null);
   const [beverageInfo, setBeverageInfo] = useState<BeverageResponse | null>(null);
 
+  // Verificar si el producto es un nombre de bebida válido (no es un texto descriptivo)
+  const isBeverageName = order.producto && 
+    !order.producto.toLowerCase().includes('productos') && 
+    !order.producto.toLowerCase().includes('sin productos') &&
+    order.producto.trim().length > 0;
+
   const { data: beverage, isLoading } = useQuery({
     queryKey: ["beverage", order.producto],
     queryFn: () => fetchBeverage(order.producto),
     retry: false,
     refetchOnWindowFocus: false,
+    enabled: isBeverageName, // Solo hacer la query si es un nombre de bebida válido
   });
 
   useEffect(() => {
+    if (!isBeverageName) {
+      // Si no es un nombre de bebida válido, no validar
+      setIsValidProduct(null);
+      setBeverageInfo(null);
+      return;
+    }
+    
     if (beverage !== undefined) {
       setIsValidProduct(beverage !== null);
       setBeverageInfo(beverage);
     }
-  }, [beverage]);
+  }, [beverage, isBeverageName]);
 
   const borderColor = isValidProduct === false 
     ? "border-l-destructive" 
@@ -75,13 +89,13 @@ export const OrderCard = ({ order }: OrderCardProps) => {
           <div className="flex-1">
             <div className="flex items-center gap-2">
               <h3 className="font-semibold text-lg text-foreground">{order.producto}</h3>
-              {isLoading && (
+              {isBeverageName && isLoading && (
                 <span className="text-xs text-muted-foreground">Verificando...</span>
               )}
-              {isValidProduct === true && (
+              {isBeverageName && isValidProduct === true && (
                 <CheckCircle2 className="w-4 h-4 text-green-500" />
               )}
-              {isValidProduct === false && (
+              {isBeverageName && isValidProduct === false && (
                 <AlertCircle className="w-4 h-4 text-destructive" />
               )}
             </div>
@@ -91,7 +105,7 @@ export const OrderCard = ({ order }: OrderCardProps) => {
                 Precio: ${beverageInfo.price.toFixed(2)}
               </p>
             )}
-            {isValidProduct === false && (
+            {isBeverageName && isValidProduct === false && (
               <p className="text-xs text-destructive mt-1">
                 ⚠️ Este producto no está disponible en el menú (localhost:8000)
               </p>

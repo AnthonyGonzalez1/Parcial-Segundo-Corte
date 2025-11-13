@@ -13,43 +13,44 @@ interface Beverage {
 
 const fetchBeverages = async (): Promise<Beverage[]> => {
   try {
-    const endpoints = ['/menu', '/menu/all', '/beverages', '/products'];
+    const response = await fetch(`http://localhost:8000/menu`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
     
-    for (const endpoint of endpoints) {
-      try {
-        const response = await fetch(`http://localhost:8000${endpoint}`);
-        if (response.ok) {
-          const data = await response.json();
-          if (Array.isArray(data)) {
-            return data;
-          }
-          if (data.menu && Array.isArray(data.menu)) {
-            return data.menu;
-          }
-          if (data.beverages && Array.isArray(data.beverages)) {
-            return data.beverages;
-          }
-          if (data.products && Array.isArray(data.products)) {
-            return data.products;
-          }
-        }
-      } catch (e) {
-        continue;
-      }
+    if (!response.ok) {
+      throw new Error(`Error al cargar productos: ${response.status} ${response.statusText}`);
     }
     
+    const data = await response.json();
+    
+    // El endpoint /menu retorna directamente un array según main.py
+    if (Array.isArray(data)) {
+      return data;
+    }
+    
+    // Si es un objeto con una propiedad que contiene el array (por compatibilidad)
+    if (data.menu && Array.isArray(data.menu)) {
+      return data.menu;
+    }
+    
+    // Si no se encuentra el formato esperado, retornar array vacío
+    console.warn("Formato de respuesta inesperado desde /menu:", data);
     return [];
   } catch (error) {
     console.error("Error fetching beverages:", error);
-    return [];
+    throw error; // Re-lanzar el error para que React Query lo maneje correctamente
   }
 };
 
 interface BeverageListProps {
   onSelectBeverage?: (beverageName: string) => void;
+  onAddToOrder?: (beverageName: string) => void;
 }
 
-export const BeverageList = ({ onSelectBeverage }: BeverageListProps) => {
+export const BeverageList = ({ onSelectBeverage, onAddToOrder }: BeverageListProps) => {
   const { data: beverages = [], isLoading, error, refetch } = useQuery({
     queryKey: ["beverages-list"],
     queryFn: fetchBeverages,
@@ -68,7 +69,7 @@ export const BeverageList = ({ onSelectBeverage }: BeverageListProps) => {
     );
   }
 
-  if (error || beverages.length === 0) {
+  if (error) {
     return (
       <Card className="p-6">
         <div className="flex items-center justify-between mb-4">
@@ -87,6 +88,31 @@ export const BeverageList = ({ onSelectBeverage }: BeverageListProps) => {
           <AlertCircle className="w-4 h-4" />
           <span>
             No se pudieron cargar los productos desde localhost:8000. Verifica que la API esté disponible.
+          </span>
+        </div>
+      </Card>
+    );
+  }
+
+  if (beverages.length === 0) {
+    return (
+      <Card className="p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-foreground">Productos Disponibles</h3>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => refetch()}
+            className="h-7 text-xs"
+          >
+            <RefreshCw className="w-3 h-3 mr-1" />
+            Actualizar
+          </Button>
+        </div>
+        <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 p-4 rounded">
+          <AlertCircle className="w-4 h-4" />
+          <span>
+            No hay productos disponibles en el menú. Agrega productos desde la API.
           </span>
         </div>
       </Card>
@@ -118,7 +144,16 @@ export const BeverageList = ({ onSelectBeverage }: BeverageListProps) => {
         {beverages.map((beverage) => (
           <Card
             key={beverage.id}
-            className="p-4 hover:shadow-md transition-all duration-200 border-l-4 border-l-primary"
+            className={`p-4 transition-all duration-200 border-l-4 border-l-primary ${
+              onAddToOrder ? 'cursor-pointer hover:shadow-lg hover:scale-[1.02] active:scale-[0.98]' : 'hover:shadow-md'
+            }`}
+            onClick={() => {
+              if (onAddToOrder) {
+                onAddToOrder(beverage.name);
+              } else if (onSelectBeverage) {
+                onSelectBeverage(beverage.name);
+              }
+            }}
           >
             <div className="flex items-start justify-between mb-2">
               <div className="flex-1">
@@ -132,11 +167,20 @@ export const BeverageList = ({ onSelectBeverage }: BeverageListProps) => {
               <span className="text-lg font-bold text-primary">
                 ${beverage.price.toFixed(2)}
               </span>
-              {onSelectBeverage && (
+              {onAddToOrder && (
+                <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Plus className="w-3 h-3" />
+                  <span>Click para agregar</span>
+                </div>
+              )}
+              {!onAddToOrder && onSelectBeverage && (
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => onSelectBeverage(beverage.name)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectBeverage(beverage.name);
+                  }}
                   className="h-7 text-xs"
                 >
                   <Plus className="w-3 h-3 mr-1" />
@@ -149,7 +193,7 @@ export const BeverageList = ({ onSelectBeverage }: BeverageListProps) => {
       </div>
       
       <div className="mt-4 text-xs text-muted-foreground text-center">
-        Productos cargados desde http://localhost:8000
+        Productos cargados desde http://localhost:8000/menu
       </div>
     </Card>
   );

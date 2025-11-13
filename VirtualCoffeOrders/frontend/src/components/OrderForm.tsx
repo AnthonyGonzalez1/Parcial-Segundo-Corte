@@ -7,8 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card } from "@/components/ui/card";
 import { toast } from "@/hooks/use-toast";
-import { ShoppingCart, RefreshCw, AlertCircle } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { ShoppingCart, RefreshCw, AlertCircle, Plus, X } from "lucide-react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Select,
   SelectContent,
@@ -18,10 +18,10 @@ import {
 } from "@/components/ui/select";
 
 const orderSchema = z.object({
-  producto: z.string().min(1, "El producto es requerido").max(100, "Máximo 100 caracteres"),
+  producto: z.string().max(100, "Máximo 100 caracteres").optional(),
   cantidad: z.string()
-    .min(1, "La cantidad es requerida")
-    .refine((val) => !isNaN(Number(val)) && Number(val) > 0, "Debe ser un número mayor a 0"),
+    .refine((val) => !val || (!isNaN(Number(val)) && Number(val) > 0), "Debe ser un número mayor a 0")
+    .optional(),
   cliente: z.string().min(1, "El nombre del cliente es requerido").max(100, "Máximo 100 caracteres"),
   direccion: z.string().max(200, "Máximo 200 caracteres").optional(),
 });
@@ -29,8 +29,9 @@ const orderSchema = z.object({
 type OrderFormData = z.infer<typeof orderSchema>;
 
 interface OrderFormProps {
-  onSubmit: (data: OrderFormData & { id: string; fecha: string; estado: string }) => void;
+  onSubmit?: (data: OrderFormData & { id: string; fecha: string; estado: string }) => void;
   preselectedProduct?: string;
+  onAddProduct?: (addProduct: (producto: string, cantidad?: string) => void) => void;
 }
 
 interface Beverage {
@@ -42,44 +43,111 @@ interface Beverage {
 
 const fetchBeverages = async (): Promise<Beverage[]> => {
   try {
-    // Intentar diferentes endpoints comunes para obtener la lista de productos
-    const endpoints = ['/menu', '/menu/all', '/beverages', '/products'];
+    console.log("Fetching beverages from http://localhost:8000/menu");
+    const response = await fetch(`http://localhost:8000/menu`, {
+      method: 'GET',
+    });
     
-    for (const endpoint of endpoints) {
-      try {
-        const response = await fetch(`http://localhost:8000${endpoint}`);
-        if (response.ok) {
-          const data = await response.json();
-          // Si es un array, retornarlo directamente
-          if (Array.isArray(data)) {
-            return data;
-          }
-          // Si es un objeto con una propiedad que contiene el array
-          if (data.menu && Array.isArray(data.menu)) {
-            return data.menu;
-          }
-          if (data.beverages && Array.isArray(data.beverages)) {
-            return data.beverages;
-          }
-          if (data.products && Array.isArray(data.products)) {
-            return data.products;
-          }
-        }
-      } catch (e) {
-        // Continuar con el siguiente endpoint
-        continue;
-      }
+    if (!response.ok) {
+      console.error(`Error response: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      console.error("Error response body:", errorText);
+      throw new Error(`Error al cargar productos: ${response.statusText}`);
     }
     
-    // Si ningún endpoint funciona, retornar array vacío
-    return [];
+    const data = await response.json();
+    console.log("Response data:", data);
+    console.log("Is array?", Array.isArray(data));
+    console.log("Data type:", typeof data);
+    
+    let beverages: Beverage[] = [];
+    
+    // Si es un array, retornarlo directamente
+    if (Array.isArray(data)) {
+      beverages = data;
+      console.log("Found array with", beverages.length, "items");
+    } 
+    // Si es un objeto con una propiedad que contiene el array
+    else if (data.menu && Array.isArray(data.menu)) {
+      beverages = data.menu;
+      console.log("Found menu array with", beverages.length, "items");
+    }
+    // Intentar otras propiedades comunes
+    else if (data.beverages && Array.isArray(data.beverages)) {
+      beverages = data.beverages;
+      console.log("Found beverages array with", beverages.length, "items");
+    }
+    else if (data.products && Array.isArray(data.products)) {
+      beverages = data.products;
+      console.log("Found products array with", beverages.length, "items");
+    }
+    else {
+      console.warn("Formato de respuesta inesperado desde /menu:", data);
+      console.warn("Keys disponibles:", Object.keys(data));
+      return [];
+    }
+    
+    // Validar que los items tengan la estructura esperada
+    const validBeverages = beverages.filter((item: any) => {
+      const hasName = item.name || item.nombre || item.producto;
+      const isValid = hasName && (item.id !== undefined || item.name || item.nombre);
+      if (!isValid) {
+        console.warn("Item inválido encontrado:", item);
+      }
+      return isValid;
+    });
+    
+    // Mapear a la estructura esperada si es necesario
+    const mappedBeverages: Beverage[] = validBeverages.map((item: any, index: number) => ({
+      id: item.id || index,
+      name: item.name || item.nombre || item.producto || String(item.id || index),
+      size: item.size || item.tamaño || "N/A",
+      price: item.price || item.precio || 0,
+    }));
+    
+    console.log("Beverages procesados:", mappedBeverages);
+    return mappedBeverages;
   } catch (error) {
     console.error("Error fetching beverages:", error);
     return [];
   }
 };
 
-export const OrderForm = ({ onSubmit, preselectedProduct }: OrderFormProps) => {
+interface OrderItem {
+  producto: string;
+  cantidad: string;
+  id: string;
+}
+
+export const OrderForm = ({ onSubmit, preselectedProduct, onAddProduct }: OrderFormProps) => {
+  const queryClient = useQueryClient();
+  const [orderItems, setOrderItems] = React.useState<OrderItem[]>([]);
+  const [currentProducto, setCurrentProducto] = React.useState<string>("");
+  const [currentCantidad, setCurrentCantidad] = React.useState<string>("1");
+
+  // Función para agregar producto desde fuera del componente
+  const addProductFromOutside = React.useCallback((producto: string, cantidad: string = "1") => {
+    const newItem: OrderItem = {
+      id: crypto.randomUUID(),
+      producto: producto,
+      cantidad: cantidad,
+    };
+    setOrderItems(prev => [...prev, newItem]);
+    
+    // Scroll suave hacia el formulario
+    setTimeout(() => {
+      const formElement = document.getElementById('order-form');
+      formElement?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 100);
+  }, []);
+
+  // Exponer la función al componente padre
+  React.useEffect(() => {
+    if (onAddProduct) {
+      onAddProduct(addProductFromOutside);
+    }
+  }, [onAddProduct, addProductFromOutside]);
+  
   const {
     register,
     handleSubmit,
@@ -93,12 +161,135 @@ export const OrderForm = ({ onSubmit, preselectedProduct }: OrderFormProps) => {
     defaultValues: preselectedProduct ? { producto: preselectedProduct } : undefined,
   });
 
-  const { data: beverages = [], isLoading: isLoadingBeverages, refetch } = useQuery({
+  const { data: beverages = [], isLoading: isLoadingBeverages, refetch, error: beveragesError } = useQuery({
     queryKey: ["beverages"],
     queryFn: fetchBeverages,
     retry: 2,
     refetchOnWindowFocus: false,
   });
+
+  // Función para mapear cantidad a tamaño del backend
+  const mapSizeToBackend = (cantidad: string): string => {
+    const num = parseInt(cantidad, 10);
+    if (num <= 1) return 'small';
+    if (num <= 2) return 'medium';
+    return 'large';
+  };
+
+  const addItemToList = () => {
+    if (!currentProducto.trim()) {
+      toast({
+        title: "Producto requerido",
+        description: "Debes seleccionar un producto",
+        variant: "destructive",
+      });
+      return;
+    }
+    
+    const newItem: OrderItem = {
+      id: crypto.randomUUID(),
+      producto: currentProducto,
+      cantidad: currentCantidad || "1",
+    };
+    
+    setOrderItems([...orderItems, newItem]);
+    setCurrentProducto("");
+    setCurrentCantidad("1");
+  };
+
+  const removeItem = (id: string) => {
+    setOrderItems(orderItems.filter(item => item.id !== id));
+  };
+
+  // Mutación para crear una orden en el backend
+  const createOrderMutation = useMutation({
+    mutationFn: async ({ cliente }: { cliente: string }) => {
+      if (orderItems.length === 0) {
+        throw new Error("Debes agregar al menos un producto a la orden");
+      }
+
+      const items = orderItems.map(item => ({
+        beverageName: item.producto,
+        size: mapSizeToBackend(item.cantidad),
+        quantity: parseInt(item.cantidad, 10) || 1,
+      }));
+
+      const requestBody = {
+        items: items,
+        customerName: cliente,
+      };
+
+      console.log("Sending order request:", JSON.stringify(requestBody, null, 2));
+      console.log("Items being sent:", items.map(item => `beverageName: "${item.beverageName}", size: "${item.size}", quantity: ${item.quantity}`));
+
+      const response = await fetch('http://localhost:8081/orders', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(
+          errorData.message || `Error al crear la orden: ${response.statusText}`
+        );
+      }
+
+      const backendOrder = await response.json();
+      
+      // Mapear respuesta del backend al formato del frontend
+      const firstItem = backendOrder.items && backendOrder.items.length > 0 
+        ? backendOrder.items[0] 
+        : null;
+      
+      return {
+        id: String(backendOrder.id),
+        producto: firstItem ? firstItem.beverageName : 'Múltiples productos',
+        cantidad: String(orderItems.reduce((sum, item) => sum + (parseInt(item.cantidad) || 1), 0)),
+        cliente: backendOrder.customerName,
+        direccion: undefined,
+        fecha: new Date(backendOrder.createdAt).toLocaleString('es-ES'),
+        estado: backendOrder.status === 'CONFIRMED' ? 'Confirmado' : 
+                backendOrder.status === 'REJECTED' ? 'Rechazado' : 'Pendiente',
+      };
+    },
+    onSuccess: (newOrder) => {
+      // Invalidar la query de órdenes para refrescar la lista
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      
+      // Si hay un callback onSubmit, llamarlo también (para compatibilidad)
+      if (onSubmit) {
+        onSubmit(newOrder);
+      }
+      
+      toast({
+        title: "¡Pedido creado!",
+        description: `Pedido con ${orderItems.length} producto(s) agregado exitosamente.`,
+      });
+      
+      reset();
+      setOrderItems([]);
+      setCurrentProducto("");
+      setCurrentCantidad("1");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error al crear pedido",
+        description: error.message || "No se pudo crear el pedido. Intenta nuevamente.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Debug: Log cuando cambian los beverages
+  React.useEffect(() => {
+    console.log("Beverages en componente:", beverages);
+    console.log("Cantidad de beverages:", beverages.length);
+    console.log("Is loading:", isLoadingBeverages);
+    console.log("Error:", beveragesError);
+  }, [beverages, isLoadingBeverages, beveragesError]);
 
   const selectedProduct = watch("producto");
 
@@ -110,21 +301,25 @@ export const OrderForm = ({ onSubmit, preselectedProduct }: OrderFormProps) => {
   }, [preselectedProduct, setValue]);
 
   const onSubmitForm = (data: OrderFormData) => {
-    const newOrder = {
-      ...data,
-      id: crypto.randomUUID(),
-      fecha: new Date().toLocaleString('es-ES'),
-      estado: 'Pendiente',
-    };
+    if (orderItems.length === 0) {
+      toast({
+        title: "Productos requeridos",
+        description: "Debes agregar al menos un producto antes de crear el pedido. Haz clic en los productos del menú para agregarlos.",
+        variant: "destructive",
+      });
+      return;
+    }
     
-    onSubmit(newOrder);
+    if (!data.cliente || data.cliente.trim() === "") {
+      toast({
+        title: "Cliente requerido",
+        description: "Debes ingresar el nombre del cliente",
+        variant: "destructive",
+      });
+      return;
+    }
     
-    toast({
-      title: "¡Pedido creado!",
-      description: `Pedido de ${data.producto} agregado exitosamente.`,
-    });
-    
-    reset();
+    createOrderMutation.mutate({ cliente: data.cliente });
   };
 
   return (
@@ -137,119 +332,90 @@ export const OrderForm = ({ onSubmit, preselectedProduct }: OrderFormProps) => {
       </div>
       
       <form onSubmit={handleSubmit(onSubmitForm)} className="space-y-5">
-        <div className="space-y-2">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="producto" className="text-sm font-medium">
-              Producto *
-            </Label>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => refetch()}
-              disabled={isLoadingBeverages}
-              className="h-7 text-xs"
-            >
-              <RefreshCw className={`w-3 h-3 mr-1 ${isLoadingBeverages ? 'animate-spin' : ''}`} />
-              Actualizar
-            </Button>
-          </div>
+        {/* Sección para agregar productos */}
+        <div className="space-y-3 p-4 bg-muted/30 rounded-lg border">
+          <Label className="text-sm font-medium">Agregar Productos</Label>
           
-          {beverages.length > 0 ? (
-            <>
-              <Controller
-                name="producto"
-                control={control}
-                rules={{ required: "El producto es requerido" }}
-                render={({ field }) => (
-                  <Select
-                    onValueChange={(value) => {
-                      field.onChange(value);
-                      const selectedBeverage = beverages.find(b => b.name === value);
-                      if (selectedBeverage) {
-                        // Opcional: auto-completar cantidad con 1 si está vacía
-                        const currentCantidad = watch("cantidad");
-                        if (!currentCantidad) {
-                          setValue("cantidad", "1");
-                        }
-                      }
-                    }}
-                    value={field.value || ""}
-                  >
-                    <SelectTrigger className="transition-all focus:ring-2 focus:ring-primary">
-                      <SelectValue placeholder="Selecciona un producto del menú" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {beverages.map((beverage) => (
-                        <SelectItem key={beverage.id} value={beverage.name}>
-                          <div className="flex items-center justify-between w-full">
-                            <span>{beverage.name}</span>
-                            <span className="text-xs text-muted-foreground ml-2">
-                              ${beverage.price.toFixed(2)}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                )}
-              />
-              {errors.producto && (
-                <p className="text-sm text-destructive">{errors.producto.message}</p>
-              )}
-              {selectedProduct && (
-                <p className="text-xs text-muted-foreground">
-                  {beverages.find(b => b.name === selectedProduct)?.name && (
-                    <>Producto seleccionado del menú de localhost:8000</>
-                  )}
-                </p>
-              )}
-            </>
-          ) : (
-            <>
-              <div className="relative">
+          <div className="flex gap-2">
+            <div className="flex-1">
+              {beverages.length > 0 ? (
+                <Select
+                  value={currentProducto}
+                  onValueChange={setCurrentProducto}
+                >
+                  <SelectTrigger className="transition-all focus:ring-2 focus:ring-primary">
+                    <SelectValue placeholder="Selecciona un producto" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {beverages.map((beverage) => (
+                      <SelectItem key={beverage.id} value={beverage.name}>
+                        <div className="flex items-center justify-between w-full">
+                          <span>{beverage.name}</span>
+                          <span className="text-xs text-muted-foreground ml-2">
+                            ${beverage.price.toFixed(2)}
+                          </span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
                 <Input
-                  id="producto"
-                  placeholder="Ingresa el nombre del producto"
-                  {...register("producto")}
+                  placeholder="Nombre del producto"
+                  value={currentProducto}
+                  onChange={(e) => setCurrentProducto(e.target.value)}
                   className="transition-all focus:ring-2 focus:ring-primary"
                 />
-                {isLoadingBeverages && (
-                  <div className="absolute right-3 top-1/2 -translate-y-1/2">
-                    <RefreshCw className="w-4 h-4 animate-spin text-muted-foreground" />
-                  </div>
-                )}
-              </div>
-              {errors.producto && (
-                <p className="text-sm text-destructive">{errors.producto.message}</p>
               )}
-              {!isLoadingBeverages && beverages.length === 0 && (
-                <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/50 p-2 rounded">
-                  <AlertCircle className="w-3 h-3" />
-                  <span>
-                    No se pudo cargar el menú. Puedes ingresar el producto manualmente.
-                  </span>
-                </div>
-              )}
-            </>
-          )}
+            </div>
+            <Input
+              type="number"
+              placeholder="Cant."
+              value={currentCantidad}
+              onChange={(e) => setCurrentCantidad(e.target.value)}
+              className="w-20 transition-all focus:ring-2 focus:ring-primary"
+              min="1"
+            />
+            <Button
+              type="button"
+              onClick={addItemToList}
+              disabled={!currentProducto.trim()}
+              className="px-4"
+            >
+              <Plus className="w-4 h-4 mr-1" />
+              Agregar
+            </Button>
+          </div>
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="cantidad" className="text-sm font-medium">
-            Cantidad *
-          </Label>
-          <Input
-            id="cantidad"
-            type="number"
-            placeholder="Ej: 2"
-            {...register("cantidad")}
-            className="transition-all focus:ring-2 focus:ring-primary"
-          />
-          {errors.cantidad && (
-            <p className="text-sm text-destructive">{errors.cantidad.message}</p>
-          )}
-        </div>
+        {/* Lista de productos agregados */}
+        {orderItems.length > 0 && (
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Productos en la orden ({orderItems.length})</Label>
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {orderItems.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-center justify-between p-3 bg-background border rounded-lg"
+                >
+                  <div className="flex-1">
+                    <p className="font-medium text-sm">{item.producto}</p>
+                    <p className="text-xs text-muted-foreground">Cantidad: {item.cantidad}</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeItem(item.id)}
+                    className="text-destructive hover:text-destructive"
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-2">
           <Label htmlFor="cliente" className="text-sm font-medium">
@@ -283,9 +449,10 @@ export const OrderForm = ({ onSubmit, preselectedProduct }: OrderFormProps) => {
 
         <Button 
           type="submit" 
-          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-6 transition-all hover:scale-[1.02]"
+          disabled={createOrderMutation.isPending}
+          className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-6 transition-all hover:scale-[1.02] disabled:opacity-50"
         >
-          Crear Pedido
+          {createOrderMutation.isPending ? "Creando pedido..." : "Crear Pedido"}
         </Button>
       </form>
     </Card>
