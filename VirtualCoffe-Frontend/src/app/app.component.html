@@ -1,0 +1,310 @@
+<!-- src/app/app.component.html -->
+<div class="container">
+  <!-- Header -->
+  <header class="header">
+    <h1>☕ {{ title }}</h1>
+    <p class="subtitle">Gestiona tu menú de bebidas</p>
+  </header>
+
+  <!-- Mensajes de notificación -->
+  <div class="messages" *ngIf="success || error">
+    <div class="alert alert-success" *ngIf="success" [@fadeIn]>
+      <span class="alert-icon">✓</span>
+      {{ success }}
+      <button class="alert-close" (click)="success = ''" aria-label="Cerrar">×</button>
+    </div>
+    
+    <div class="alert alert-error" *ngIf="error" [@fadeIn]>
+      <span class="alert-icon">⚠</span>
+      {{ error }}
+      <button class="alert-close" (click)="error = ''" aria-label="Cerrar">×</button>
+    </div>
+  </div>
+
+  <!-- Formulario de bebidas -->
+  <div class="card">
+    <div class="card-header">
+      <h2>
+        <span *ngIf="!editMode">➕ Agregar Nueva Bebida</span>
+        <span *ngIf="editMode">✏️ Editar Bebida</span>
+      </h2>
+    </div>
+    
+    <form [formGroup]="beverageForm" (ngSubmit)="onSubmit()" class="beverage-form">
+      <!-- Nombre -->
+      <div class="form-group">
+        <label for="name" class="form-label">
+          Nombre de la bebida <span class="required">*</span>
+        </label>
+        <input 
+          id="name" 
+          formControlName="name" 
+          type="text" 
+          class="form-input"
+          placeholder="Ej: Cappuccino"
+          [class.invalid]="isFieldInvalid('name')"
+          [disabled]="loading">
+        <span class="error-message" *ngIf="isFieldInvalid('name')">
+          {{ getErrorMessage('name') }}
+        </span>
+        <span class="help-text" *ngIf="!isFieldInvalid('name')">
+          Nombre único para identificar la bebida
+        </span>
+      </div>
+
+      <!-- Tamaño -->
+      <div class="form-group">
+        <label for="size" class="form-label">
+          Tamaño <span class="required">*</span>
+        </label>
+        <select 
+          id="size" 
+          formControlName="size" 
+          class="form-select"
+          [disabled]="loading">
+          <option *ngFor="let size of sizes" [value]="size.value">
+            {{ size.label }}
+          </option>
+        </select>
+        <span class="help-text">Tamaño de la porción</span>
+      </div>
+
+      <!-- Precio -->
+      <div class="form-group">
+        <label for="price" class="form-label">
+          Precio (USD) <span class="required">*</span>
+        </label>
+        <div class="input-group">
+          <span class="input-prefix">$</span>
+          <input 
+            id="price" 
+            formControlName="price" 
+            type="number" 
+            step="0.01"
+            class="form-input price-input"
+            placeholder="0.00"
+            [class.invalid]="isFieldInvalid('price')"
+            [disabled]="loading">
+        </div>
+        <span class="error-message" *ngIf="isFieldInvalid('price')">
+          {{ getErrorMessage('price') }}
+        </span>
+        <span class="help-text" *ngIf="!isFieldInvalid('price')">
+          Precio entre $0.01 y $100.00
+        </span>
+      </div>
+
+      <!-- Botones -->
+      <div class="button-group">
+        <button 
+          type="submit" 
+          class="btn btn-primary"
+          [disabled]="loading || beverageForm.invalid">
+          <span *ngIf="!loading">
+            <span *ngIf="!editMode">➕ Agregar Bebida</span>
+            <span *ngIf="editMode">💾 Guardar Cambios</span>
+          </span>
+          <span *ngIf="loading" class="loading-spinner">
+            ⏳ Procesando...
+          </span>
+        </button>
+        
+        <button 
+          type="button" 
+          (click)="resetForm()" 
+          class="btn btn-secondary"
+          *ngIf="editMode || beverageForm.dirty"
+          [disabled]="loading">
+          ✖ Cancelar
+        </button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Filtros -->
+  <div class="card filters-card" *ngIf="beverages.length > 0">
+    <div class="card-header">
+      <h3>🔍 Filtros</h3>
+      <button 
+        *ngIf="filterForm.dirty" 
+        (click)="clearFilters()" 
+        class="btn btn-link btn-small">
+        Limpiar filtros
+      </button>
+    </div>
+    
+    <form [formGroup]="filterForm" class="filters-form">
+      <div class="form-group-inline">
+        <div class="form-group">
+          <label for="filterSize" class="form-label">Tamaño</label>
+          <select id="filterSize" formControlName="size" class="form-select">
+            <option value="">Todos</option>
+            <option *ngFor="let size of sizes" [value]="size.value">
+              {{ size.label }}
+            </option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="minPrice" class="form-label">Precio mínimo</label>
+          <div class="input-group">
+            <span class="input-prefix">$</span>
+            <input 
+              id="minPrice" 
+              formControlName="minPrice" 
+              type="number" 
+              step="0.01"
+              class="form-input price-input"
+              placeholder="0.00">
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="maxPrice" class="form-label">Precio máximo</label>
+          <div class="input-group">
+            <span class="input-prefix">$</span>
+            <input 
+              id="maxPrice" 
+              formControlName="maxPrice" 
+              type="number" 
+              step="0.01"
+              class="form-input price-input"
+              placeholder="100.00">
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+
+  <!-- Lista de bebidas -->
+  <div class="card">
+    <div class="card-header">
+      <h2>
+        📋 Menú Actual 
+        <span class="badge badge-primary">{{ filteredBeverages.length }}</span>
+        <span *ngIf="filteredBeverages.length !== beverages.length" class="badge badge-secondary">
+          de {{ beverages.length }}
+        </span>
+      </h2>
+      <button 
+        (click)="loadBeverages()" 
+        class="btn btn-secondary btn-small"
+        [disabled]="loading">
+        <span *ngIf="!loading">🔄 Actualizar</span>
+        <span *ngIf="loading">⏳</span>
+      </button>
+    </div>
+
+    <!-- Loading state -->
+    <div *ngIf="loading && beverages.length === 0" class="loading-state">
+      <div class="spinner"></div>
+      <p>Cargando menú...</p>
+    </div>
+
+    <!-- Empty state -->
+    <div *ngIf="!loading && beverages.length === 0" class="empty-state">
+      <div class="empty-icon">☕</div>
+      <h3>No hay bebidas en el menú</h3>
+      <p>¡Agrega la primera bebida usando el formulario de arriba!</p>
+    </div>
+
+    <!-- Empty filter results -->
+    <div *ngIf="!loading && beverages.length > 0 && filteredBeverages.length === 0" class="empty-state">
+      <div class="empty-icon">🔍</div>
+      <h3>No se encontraron bebidas</h3>
+      <p>Intenta ajustar los filtros</p>
+      <button (click)="clearFilters()" class="btn btn-primary">
+        Limpiar filtros
+      </button>
+    </div>
+
+    <!-- Tabla de bebidas -->
+    <div class="table-container" *ngIf="filteredBeverages.length > 0">
+      <table class="beverages-table">
+        <thead>
+          <tr>
+            <th class="col-id">#</th>
+            <th class="col-name">Nombre</th>
+            <th class="col-size">Tamaño</th>
+            <th class="col-price">Precio</th>
+            <th class="col-actions">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let beverage of filteredBeverages; let i = index" 
+              [@fadeIn]
+              [class.editing]="editingId === beverage.id">
+            <td class="col-id">{{ beverage.id }}</td>
+            <td class="col-name">
+              <strong>{{ beverage.name }}</strong>
+            </td>
+            <td class="col-size">
+              <span class="badge badge-size" [class]="'badge-' + beverage.size">
+                {{ getSizeLabel(beverage.size) }}
+              </span>
+            </td>
+            <td class="col-price">
+              <span class="price">{{ formatPrice(beverage.price) }}</span>
+            </td>
+            <td class="col-actions">
+              <div class="action-buttons">
+                <button 
+                  (click)="editBeverage(beverage)" 
+                  class="btn btn-icon btn-edit"
+                  title="Editar"
+                  [disabled]="loading">
+                  ✏️
+                </button>
+                <button 
+                  (click)="deleteBeverage(beverage)" 
+                  class="btn btn-icon btn-delete"
+                  title="Eliminar"
+                  [disabled]="loading">
+                  🗑️
+                </button>
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Estadísticas -->
+    <div class="stats-footer" *ngIf="beverages.length > 0">
+      <div class="stat-item">
+        <span class="stat-label">Total:</span>
+        <span class="stat-value">{{ getMenuStatistics().total }}</span>
+      </div>
+      <div class="stat-divider">|</div>
+      <div class="stat-item">
+        <span class="stat-label">Pequeño:</span>
+        <span class="stat-value">{{ getMenuStatistics().small }}</span>
+      </div>
+      <div class="stat-divider">|</div>
+      <div class="stat-item">
+        <span class="stat-label">Mediano:</span>
+        <span class="stat-value">{{ getMenuStatistics().medium }}</span>
+      </div>
+      <div class="stat-divider">|</div>
+      <div class="stat-item">
+        <span class="stat-label">Grande:</span>
+        <span class="stat-value">{{ getMenuStatistics().large }}</span>
+      </div>
+      <div class="stat-divider">|</div>
+      <div class="stat-item">
+        <span class="stat-label">Precio promedio:</span>
+        <span class="stat-value">{{ formatPrice(getMenuStatistics().avgPrice) }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <p>VirtualCoffee © 2025 | Ingeniería de Software I</p>
+    <p class="footer-links">
+      <a href="http://localhost:8000/docs" target="_blank">📚 API Docs</a>
+      <span>•</span>
+      <a href="http://localhost:3000" target="_blank">🛒 Pedidos</a>
+    </p>
+  </footer>
+</div>

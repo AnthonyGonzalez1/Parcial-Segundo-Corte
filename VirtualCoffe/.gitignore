@@ -1,0 +1,4 @@
+.idea/
+drinksApi/.venv/
+drinksApi/__pycache__/
+drinksApi/app/__pycache__/
